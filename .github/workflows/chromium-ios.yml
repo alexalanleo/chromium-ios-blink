@@ -31,7 +31,6 @@ jobs:
     timeout-minutes: 360
     env:
       BUNDLE_ID_PREFIX: ${{ vars.IOS_BUNDLE_ID_PREFIX }}
-      CHROMIUM_WORK_ROOT: ${{ runner.temp }}/chromium-ios-work
       BUILD_CONFIG: Debug
     steps:
       - name: Checkout starter project
