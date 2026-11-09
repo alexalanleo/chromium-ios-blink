@@ -1,0 +1,7 @@
+.DS_Store
+.env
+*.p12
+*.mobileprovision
+*.ipa
+chromium/
+out/

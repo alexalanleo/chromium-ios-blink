@@ -1,0 +1,94 @@
+\
+name: Chromium iOS (Blink)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Simulator first; device requires Apple signing secrets and entitlements."
+        required: true
+        type: choice
+        options:
+          - simulator
+          - device
+        default: simulator
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - ".github/workflows/chromium-ios.yml"
+      - "README.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chromium-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    env:
+      BUNDLE_ID_PREFIX: ${{ vars.IOS_BUNDLE_ID_PREFIX }}
+      CHROMIUM_WORK_ROOT: ${{ runner.temp }}/chromium-ios-work
+      BUILD_CONFIG: Debug
+    steps:
+      - name: Checkout starter project
+        uses: actions/checkout@v4
+
+      - name: Show host toolchain
+        shell: bash
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          df -h /
+
+      - name: Check device signing configuration
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'device' }}
+        shell: bash
+        env:
+          IOS_SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_SIGNING_CERTIFICATE_P12_BASE64 }}
+          IOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILES_ZIP_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILES_ZIP_BASE64 }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$BUNDLE_ID_PREFIX" || { echo "::error::Set repository variable IOS_BUNDLE_ID_PREFIX to a reverse-DNS prefix you control."; exit 1; }
+          test "$BUNDLE_ID_PREFIX" != "com.example" || { echo "::error::Replace the example bundle prefix."; exit 1; }
+          ./scripts/import-signing-assets.sh
+
+      - name: Bootstrap Chromium and configure Blink
+        shell: bash
+        run: ./scripts/bootstrap-chromium.sh
+
+      - name: Build simulator targets
+        if: ${{ github.event_name == 'push' || inputs.build_mode == 'simulator' }}
+        shell: bash
+        run: ./scripts/build-simulator.sh
+
+      - name: Upload simulator app bundles
+        if: ${{ github.event_name == 'push' || inputs.build_mode == 'simulator' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blink-ios-simulator-apps
+          path: ${{ runner.temp }}/chromium-ios-work/artifacts/simulator/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build and package device IPA
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'device' }}
+        shell: bash
+        env:
+          ARTIFACTS_DIR: ${{ runner.temp }}/chromium-ios-work/artifacts/device
+        run: ./scripts/build-device.sh
+
+      - name: Upload device IPA
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'device' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-ios-device-ipa
+          path: ${{ runner.temp }}/chromium-ios-work/artifacts/device/ChromiumIOS.ipa
+          if-no-files-found: error
+          retention-days: 7
